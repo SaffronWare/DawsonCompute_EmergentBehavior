@@ -1,9 +1,28 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
+// Setting up the scene
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x87ceeb)
+scene.background = new THREE.Color(0x87ceeb);
 const camera = new THREE.PerspectiveCamera( 90, window.innerWidth / window.innerHeight, 0.1, 1000 );
+
+const renderer = new THREE.WebGLRenderer();
+renderer.setSize( window.innerWidth, window.innerHeight );
+renderer.setAnimationLoop(animate);
+renderer.shadowMap.enabled = true;
+document.body.appendChild( renderer.domElement );
+
+// Lighting
+const ambientLight = new THREE.AmbientLight(0xFFFFFF, 1);
+scene.add(ambientLight);
+
+const pointLight = new THREE.PointLight(0xFFFFFF, 100000);
+pointLight.position.set(200,300,50);
+pointLight.castShadow = true; 
+scene.add(pointLight);
+
+
+// Constants
 const SUBSTEPS = 8;
 const dt = 1/60;
 const subDt = dt/SUBSTEPS;
@@ -15,11 +34,7 @@ const dampingCoefficient = 1000;
 const particles = [];
 const springs = [];
 
-const renderer = new THREE.WebGLRenderer();
-renderer.setSize( window.innerWidth, window.innerHeight );
-renderer.setAnimationLoop(animate);
-document.body.appendChild( renderer.domElement );
-
+// Movements
 const controls = new OrbitControls( camera, renderer.domElement );
 
 const keysHeld = {};
@@ -60,10 +75,11 @@ function handleMovement(camera) {
     }
 }
 
+// Physics functions
 
 function create_particle(pos, isMoving) {
     const geometry = new THREE.SphereGeometry( radius, 32, 16);
-    const material = new THREE.MeshBasicMaterial( { color: 0x808080 } );
+    const material = new THREE.MeshStandardMaterial( { color: 0x808080 } );
     const cube_mesh = new THREE.Mesh( geometry, material );
     cube_mesh.position.copy(pos);
     const cube = {
@@ -88,6 +104,84 @@ function create_spring(b1, b2){
     };
     springs.push(spring);
 }
+
+function springLengthNeeded(width,length) {
+    const perimeter = width*2 + length*2;
+    if (perimeter <= 1000) {
+        return 10;
+    }
+    return Math.round(perimeter / 200);
+}
+
+function apply_verlet(pos, prevPos, a, dt) {
+    let changeDueToAcceleration = a.clone().multiplyScalar(dt **2);
+    let delta = pos.clone().sub(prevPos);
+    pos.add(changeDueToAcceleration).add(delta);
+    prevPos.add(delta);
+}
+
+function apply_constraint(planePos, pos, prevPos) {
+    if (pos.y - radius <= planePos.y){
+        let temp = pos.y;
+        let ogVel = temp - prevPos.y;
+
+        pos.y = planePos.y + radius;
+        prevPos.y = pos.y + ogVel*restitution ;
+    }
+}
+
+function apply_spring(spring) {  
+    let currLength = spring.b2.pos.distanceTo(spring.b1.pos);
+    if (currLength < 0.01){
+        return;
+    }
+    let delta = currLength - spring.initLength;
+    let dir = spring.b2.pos.clone().sub(spring.b1.pos).normalize();
+    let spForce= spring.spConstant * delta;
+
+    let v1 = spring.b1.pos.clone().sub(spring.b1.prevPos);
+    let v2 = spring.b2.pos.clone().sub(spring.b2.prevPos);
+    let factor = v2.clone().sub(v1).dot(dir);
+    let dampingForce = spring.dampingCoefficient * factor / dt;
+
+    let totalForce = spring.spConstant * delta + dampingForce;
+
+    spring.b1.accel.add(dir.clone().multiplyScalar(totalForce));
+    spring.b2.accel.sub(dir.clone().multiplyScalar(totalForce));
+}
+
+function apply_collisions(particles) {
+    for(let i = 0; i < particles.length - 1; i++){
+        for(let j = i + 1; j < particles.length; j++){
+            let collision_axis = particles[j].pos.clone().sub(particles[i].pos);
+            let dist = collision_axis.length();
+            if (dist < 0.01) {
+                continue;
+            }
+            if (dist < 2 * radius) {
+                let delta = 2 * radius - dist;
+                const normal = collision_axis.clone().divideScalar(dist);
+
+                particles[i].pos.sub(normal.clone().multiplyScalar(delta / 2));
+                particles[j].pos.add(normal.clone().multiplyScalar(delta / 2));
+
+                let v1 = particles[i].pos.clone().sub(particles[i].prevPos);
+                let v2 = particles[j].pos.clone().sub(particles[j].prevPos);
+
+                let v1n = normal.clone().multiplyScalar(v1.dot(normal));
+                let v2n = normal.clone().multiplyScalar(v2.dot(normal));
+
+                particles[i].prevPos = particles[i].pos.clone().sub(
+                    v1.sub(v1n).add(v2n.clone().multiplyScalar(restitution))
+                );
+                particles[j].prevPos = particles[j].pos.clone().sub(
+                    v2.sub(v2n).add(v1n.clone().multiplyScalar(restitution))
+                );
+            }
+        }
+    }
+}
+
 
 function create_cloth(startPos, width, length, spLength) {
     let positions = [];
@@ -167,44 +261,17 @@ function create_cloth(startPos, width, length, spLength) {
     geometry.setIndex(indexArray);
     geometry.computeVertexNormals();
 
-    const material = new THREE.MeshBasicMaterial({ 
+    const material = new THREE.MeshStandardMaterial({ 
         color: 0xFFFFFF, 
-        side: THREE.DoubleSide 
+        side: THREE.DoubleSide ,
+        wireframe: false
     });
     const cloth = new THREE.Mesh(geometry, material);
+    cloth.castShadow = true;
     cloth.geometry.computeBoundingBox();
     scene.add(cloth);
     return cloth;
 }
-function springLengthNeeded(width,length) {
-    const perimeter = width*2 + length*2;
-    if (perimeter <= 1000) {
-        return 10;
-    }
-    return Math.round(perimeter / 200);
-}
-
-const cloth = create_cloth(new THREE.Vector3(0,250,0), 100,100, springLengthNeeded(500,500));
-const planeGeometry = new THREE.PlaneGeometry(5000,5000);
-const planeMaterial = new THREE.MeshBasicMaterial( {color: 0x808080, side: THREE.DoubleSide});
-const plane = new THREE.Mesh(planeGeometry, planeMaterial);
-scene.add(plane);
-plane.position.set(0,-100,0);
-plane.rotation.x = Math.PI / 2;
-const center = new THREE.Vector3();
-cloth.geometry.boundingBox.getCenter(center);
-
-camera.position.y -= 20;
-camera.lookAt(center);
-controls.target.copy(center);
-
-const toCenter = new THREE.Vector3();
-toCenter.subVectors(center, camera.position).normalize();
-
-const distanceToCenter = camera.position.distanceTo(center);
-camera.position.add(toCenter.multiplyScalar(distanceToCenter / 2));
-
-controls.update();
 
 
 function animate() {
@@ -229,71 +296,28 @@ function animate() {
     renderer.render( scene, camera );
 }
 
-function apply_verlet(pos, prevPos, a, dt) {
-    let changeDueToAcceleration = a.clone().multiplyScalar(dt **2);
-    let delta = pos.clone().sub(prevPos);
-    pos.add(changeDueToAcceleration).add(delta);
-    prevPos.add(delta);
-}
+// Adding the plane and cloth to the scene
+const cloth = create_cloth(new THREE.Vector3(0,250,0), 100,100, springLengthNeeded(500,500));
+const planeGeometry = new THREE.PlaneGeometry(5000,5000);
+const planeMaterial = new THREE.MeshStandardMaterial( {color: 0x808080, side: THREE.DoubleSide});
+const plane = new THREE.Mesh(planeGeometry, planeMaterial);
+plane.receiveShadow = true;
+scene.add(plane);
+plane.position.set(0,-100,0);
+plane.rotation.x = Math.PI / 2;
+const center = new THREE.Vector3();
+cloth.geometry.boundingBox.getCenter(center);
 
-function apply_constraint(planePos, pos, prevPos) {
-    if (pos.y - radius <= planePos.y){
-        let temp = pos.y;
-        let ogVel = temp - prevPos.y;
+// Aligning camera's initial position
+camera.position.y -= 20;
+camera.lookAt(center);
+controls.target.copy(center);
 
-        pos.y = planePos.y + radius;
-        prevPos.y = pos.y + ogVel*restitution ;
-    }
-}
+const toCenter = new THREE.Vector3();
+toCenter.subVectors(center, camera.position).normalize();
 
-function apply_spring(spring) {  
-    let currLength = spring.b2.pos.distanceTo(spring.b1.pos);
-    if (currLength < 0.01){
-        return;
-    }
-    let delta = currLength - spring.initLength;
-    let dir = spring.b2.pos.clone().sub(spring.b1.pos).normalize();
-    let spForce= spring.spConstant * delta;
+const distanceToCenter = camera.position.distanceTo(center);
+camera.position.add(toCenter.multiplyScalar(distanceToCenter / 2));
 
-    let v1 = spring.b1.pos.clone().sub(spring.b1.prevPos);
-    let v2 = spring.b2.pos.clone().sub(spring.b2.prevPos);
-    let factor = v2.clone().sub(v1).dot(dir);
-    let dampingForce = spring.dampingCoefficient * factor / dt;
+controls.update();
 
-    let totalForce = spring.spConstant * delta + dampingForce;
-
-    spring.b1.accel.add(dir.clone().multiplyScalar(totalForce));
-    spring.b2.accel.sub(dir.clone().multiplyScalar(totalForce));
-}
-
-function apply_collisions(particles) {
-    for(let i = 0; i < particles.length - 1; i++){
-        for(let j = i + 1; j < particles.length; j++){
-            let collision_axis = particles[j].pos.clone().sub(particles[i].pos);
-            let dist = collision_axis.length();
-            if (dist < 0.01) {
-                continue;
-            }
-            if (dist < 2 * radius) {
-                let delta = 2 * radius - dist;
-                const normal = collision_axis.clone().divideScalar(dist);
-
-                particles[i].pos.sub(normal.clone().multiplyScalar(delta / 2));
-                particles[j].pos.add(normal.clone().multiplyScalar(delta / 2));
-
-                let v1 = particles[i].pos.clone().sub(particles[i].prevPos);
-                let v2 = particles[j].pos.clone().sub(particles[j].prevPos);
-
-                let v1n = normal.clone().multiplyScalar(v1.dot(normal));
-                let v2n = normal.clone().multiplyScalar(v2.dot(normal));
-
-                particles[i].prevPos = particles[i].pos.clone().sub(
-                    v1.sub(v1n).add(v2n.clone().multiplyScalar(restitution))
-                );
-                particles[j].prevPos = particles[j].pos.clone().sub(
-                    v2.sub(v2n).add(v1n.clone().multiplyScalar(restitution))
-                );
-            }
-        }
-    }
-}
