@@ -80,7 +80,7 @@ def main():
 
     card1 = Card(Vector3(1,1,0), Vector3(0,0,0), Vector3())
     camera = Camera()
-    camera.pos = Vector3(0,0,-1)
+    camera.pos = Vector3(0,0,-2)
     
 
     running = True 
@@ -88,8 +88,8 @@ def main():
         window.fill((0,0,0))
         
         card1.display(window, camera)
-        card1.ori.y += dt
-        camera.pos.z -= dt
+        card1.ori.y += 10*dt
+        #camera.pos.z = dt
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
