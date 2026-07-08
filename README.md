@@ -18,6 +18,7 @@ prototyping/
 - Cloth (Nam Quan)
 - Slime (Francisco)
 - Ants (Nam Quan)
+- Hydraulic Erosion (Nam Quan)
 - Conway's game of life (Francisco)
 - Cellula automata (Peyton)
 - Neural Network
