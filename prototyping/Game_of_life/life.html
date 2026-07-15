@@ -1,117 +1,278 @@
+Ah, good catch! Let's look at why that happened.
+
+Because of the automatic reset check inside the render() function:
+
+JavaScript
+if (aliveCount === 0) {
+    init();
+}
+When you clicked Clear, it emptied the grid (setting aliveCount to 0). The very next frame, the renderer saw that the board was completely empty and immediately triggered init(), which repopulated the board with random cells.
+
+To fix this, we can change the auto-reset condition so that it only triggers a random board if the game is actively running and goes extinct. If you clear the board (or if it dies out while paused), it should stay empty so you can draw your own patterns in peace.
+
+Here is the corrected code. I updated the render() check and the Clear button's event listener to make sure it clears properly and stays paused.
+
+HTML
 <!DOCTYPE html>
 <html>
-<title>Conway`s game of life</title>
-<canvas id="conway" width="1280" height="720"></canvas> 
-<style>
-* {
-    margin: 0px;
-    padding: 0px;
+<head>
+    <title>Conway's Game of Life</title>
+    <style>
+        * {
+            margin: 0px;
+            padding: 0px;
+            box-sizing: border-box;
+        }
+        body {
+            overflow: hidden;
+            background-color: black;
+        }
+        #conway {
+            display: block;
+        }
+        /* UI Control Panel */
+        #controls {
+            position: absolute;
+            top: 15px;
+            left: 15px;
+            z-index: 10;
+            background: rgba(0, 0, 0, 0.75);
+            border: 1px solid #444;
+            padding: 12px;
+            border-radius: 8px;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: white;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        button {
+            background-color: #333;
+            color: white;
+            border: 1px solid #555;
+            padding: 6px 12px;
+            cursor: pointer;
+            border-radius: 4px;
+            font-weight: bold;
+            transition: background 0.2s;
+            user-select: none;
+        }
+        button:hover {
+            background-color: #555;
+        }
+        button:active {
+            background-color: #777;
+        }
+        #speed-display {
+            font-size: 14px;
+            min-width: 90px;
+            text-align: center;
+            user-select: none;
+        }
+    </style>
+</head>
+<body>
 
-}
-</style>
+    <div id="controls">
+        <button id="btn-pause">Pause</button>
+        <button id="btn-faster">Speed +</button>
+        <button id="btn-slower">Speed -</button>
+        <button id="btn-random">Randomize</button>
+        <button id="btn-clear">Clear</button>
+        <span id="speed-display">Interval: 100ms</span>
+    </div>
+
+    <canvas id="conway"></canvas> 
+
 <script>
-conway = document.getElementById('conway').getContext("2d")
+const canvas = document.getElementById('conway');
+const conway = canvas.getContext("2d");
 
-// this two make it full screen
-document.getElementById('conway').width = window.innerWidth
-document.getElementById('conway').height = window.innerHeight
-width = document.getElementById('conway').width
-height = document.getElementById('conway').height
-size = 5 
+// Set fullscreen canvas dimensions
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+const width = canvas.width;
+const height = canvas.height;
+const size = 8; // Adjust cell size (larger = easier to click)
 
-draw = (x,y,c,s) => {
-    conway.fillStyle = c
-    conway.fillRect(x,y,s,s)
+const cols = Math.floor(width / size);
+const rows = Math.floor(height / size);
+
+let grid = [];
+let tempgrid = [];
+
+// Interactive simulation states
+let isPaused = false;
+let speedInterval = 100; // lower = faster, higher = slower
+let isDrawing = false; // Tracks click-and-drag paint state
+
+const draw = (x, y, c, s) => {
+    conway.fillStyle = c;
+    conway.fillRect(x, y, s, s);
 }
 
-grid = []
-tempgrid =[]
-
-cellValue = (x,y) => {
-    try {
-        return grid[x][y]
-    }catch {
-        return 0
-    }
+const cellValue = (x, y) => {
+    const targetX = (x + cols) % cols;
+    const targetY = (y + rows) % rows;
+    return grid[targetX][targetY];
 }
 
-countAdjacent = (x,y) => {
-    count = 0
-    // center
-    if(cellValue(x-1,y))count++
-    if(cellValue(x+1,y))count++
-    //down
-    if(cellValue(x-1,y-1))count++
-    if(cellValue(x,y-1))count++
-    if(cellValue(x+1,y-1))count++
-    // up
-    if(cellValue(x-1,y+1))count++
-    if(cellValue(x,y+1))count++
-    if(cellValue(x+1,y+1))count++
-    return count
-}
-
-updateCell= (x,y) => {
-    adjacent = countAdjacent(x,y)
-    if(adjacent>4 || adjacent < 3) return 0 
-    if(grid[x][y] ==  0 && adjacent == 3)return 1
-    return grid[x][y]
-
-}
-
-update = () => {
-    conway.clearRect(0,0,width,height)
-    draw(0,0,'black',width)
-    for (let x = 0; x < width/size; x++){
-        for(let y = 0; y < height/size; y++){
-            tempgrid[x][y] = updateCell(x,y)
+const countAdjacent = (x, y) => {
+    let count = 0;
+    for (let i = -1; i <= 1; i++) {
+        for (let j = -1; j <= 1; j++) {
+            if (i === 0 && j === 0) continue; // Skip self
+            if (cellValue(x + i, y + j)) count++;
         }
     }
+    return count;
+}
 
-    grid = tempgrid
-    var cnt = 0 
+const updateCell = (x, y) => {
+    const adjacent = countAdjacent(x, y);
+    const alive = grid[x][y];
 
-    for (let x = 0; x < width/size; x++){
-        for(let y = 0; y < height/size; y++){
-            if(grid[x][y]) {
-                draw(x*size,y*size,`rgb(${x},${y},100)`,size)
-                cnt +=1
+    if (alive === 1) {
+        return (adjacent === 2 || adjacent === 3) ? 1 : 0;
+    } else {
+        return (adjacent === 3) ? 1 : 0;
+    }
+}
+
+const stepPhysics = () => {
+    for (let x = 0; x < cols; x++) {
+        for (let y = 0; y < rows; y++) {
+            tempgrid[x][y] = updateCell(x, y);
+        }
+    }
+    for (let x = 0; x < cols; x++) {
+        grid[x] = [...tempgrid[x]]; 
+    }
+}
+
+// Draw the grid state onto the screen
+const render = () => {
+    conway.clearRect(0, 0, width, height);
+    draw(0, 0, 'black', width);
+
+    let aliveCount = 0;
+    for (let x = 0; x < cols; x++) {
+        for (let y = 0; y < rows; y++) {
+            if (grid[x][y]) {
+                draw(x * size, y * size, `rgb(${(x/cols)*255}, ${(y/rows)*255}, 150)`, size - 1);
+                aliveCount++;
             }
         }
     }
-    if (((width/size)*(height/size))/cnt >99 ) init()
 
-    //per frame (fast)
-    //setTimeout(() => {requestAnimationFrame(update)},40);
-
-    //set speed (slow)
-    setTimeout(() => { requestAnimationFrame(update) }, 100);
+    // Only auto-reset if the game is actually running and dies out
+    if (aliveCount === 0 && !isPaused) {
+        init();
+    }
 }
 
-initArray = (w,h) =>{
-    arr = []
-    for(let x = 0; x <w;x ++){
-        arr[x] = []
-        for(let y = 0; y < h; y++){
+const loop = () => {
+    if (!isPaused) {
+        stepPhysics();
+    }
+    render();
+    setTimeout(() => {
+        requestAnimationFrame(loop);
+    }, speedInterval);
+}
+
+const initArray = (w, h) => {
+    let arr = [];
+    for (let x = 0; x < w; x++) {
+        arr[x] = [];
+        for (let y = 0; y < h; y++) {
             arr[x][y] = 0;   
         }
     }
-    return arr
-
+    return arr;
 }
 
-
-init = () => {
-    grid = initArray(width/size,height/size)
-    tempgrid = initArray(width/size,height/size)
-    for (let x = 0; x < width/size; x++){
-        for(let y = 0; y < height/size; y++){
-            if(Math.random() > 0.3) grid[x][y] = 1
-
+const init = () => {
+    grid = initArray(cols, rows);
+    tempgrid = initArray(cols, rows);
+    for (let x = 0; x < cols; x++) {
+        for (let y = 0; y < rows; y++) {
+            if (Math.random() > 0.7) grid[x][y] = 1; // 30% fill rate
         }
     }
 }
-init()
-update()
+
+// --- CONTROLS & EVENT LISTENERS ---
+
+const handleInteract = (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const clickY = e.clientY - rect.top;
+    
+    const cellX = Math.floor(clickX / size);
+    const cellY = Math.floor(clickY / size);
+
+    if (cellX >= 0 && cellX < cols && cellY >= 0 && cellY < rows) {
+        grid[cellX][cellY] = 1; 
+        render(); 
+    }
+}
+
+canvas.addEventListener('mousedown', (e) => {
+    isDrawing = true;
+    handleInteract(e);
+});
+
+canvas.addEventListener('mousemove', (e) => {
+    if (isDrawing) handleInteract(e);
+});
+
+window.addEventListener('mouseup', () => {
+    isDrawing = false;
+});
+
+// UI Buttons
+const btnPause = document.getElementById('btn-pause');
+const btnFaster = document.getElementById('btn-faster');
+const btnSlower = document.getElementById('btn-slower');
+const btnRandom = document.getElementById('btn-random');
+const btnClear = document.getElementById('btn-clear');
+const speedDisplay = document.getElementById('speed-display');
+
+btnPause.addEventListener('click', () => {
+    isPaused = !isPaused;
+    btnPause.innerText = isPaused ? "Play" : "Pause";
+});
+
+btnFaster.addEventListener('click', () => {
+    if (speedInterval > 10) {
+        speedInterval -= 15;
+        speedDisplay.innerText = `Interval: ${speedInterval}ms`;
+    }
+});
+
+btnSlower.addEventListener('click', () => {
+    if (speedInterval < 1000) {
+        speedInterval += 15;
+        speedDisplay.innerText = `Interval: ${speedInterval}ms`;
+    }
+});
+
+btnRandom.addEventListener('click', () => {
+    init();
+    render();
+});
+
+// FIX: Clears the board and pauses the simulation so you can draw without interference
+btnClear.addEventListener('click', () => {
+    isPaused = true;
+    btnPause.innerText = "Play";
+    grid = initArray(cols, rows);
+    render();
+});
+
+// Boot up
+init();
+loop();
 </script>
-</html>   
+</html>
